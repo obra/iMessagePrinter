@@ -20,6 +20,7 @@ final class AppState {
     private var databaseService: DatabaseService?
     private var contactResolver = ContactResolver()
     private var handleMap: [Int64: HandleRecord] = [:]
+    private var messageLoadTask: Task<Void, Never>?
 
     var filteredConversations: [ConversationInfo] {
         if searchText.isEmpty { return conversations }
@@ -131,15 +132,23 @@ final class AppState {
 
     func loadMessages(for conversation: ConversationInfo) {
         guard let db = databaseService else { return }
+
+        // Cancel any in-flight message load
+        messageLoadTask?.cancel()
+
         selectedConversation = conversation
         isLoadingMessages = true
         messages = []
         loadedMessageCount = 0
         totalMessageCount = 0
 
-        Task.detached { [self] in
+        let chatRowID = conversation.chatRowID
+
+        messageLoadTask = Task.detached { [self] in
             do {
-                let records = try db.fetchMessages(chatRowID: conversation.chatRowID)
+                let records = try db.fetchMessages(chatRowID: chatRowID)
+
+                try Task.checkCancellation()
 
                 await MainActor.run {
                     self.totalMessageCount = records.count
@@ -158,6 +167,8 @@ final class AppState {
                 var processed = 0
 
                 for record in records {
+                    try Task.checkCancellation()
+
                     guard !record.isReaction && !record.isReactionRemoval else {
                         processed += 1
                         continue
@@ -245,6 +256,8 @@ final class AppState {
                     }
                 }
 
+                try Task.checkCancellation()
+
                 // Flush remaining
                 if !batch.isEmpty {
                     let toAppend = batch
@@ -257,6 +270,8 @@ final class AppState {
                     self.loadedMessageCount = self.messages.count
                     self.isLoadingMessages = false
                 }
+            } catch is CancellationError {
+                // Silently stop — a new load replaced us
             } catch {
                 await MainActor.run {
                     self.errorMessage = "Failed to load messages: \(error.localizedDescription)"

@@ -11,6 +11,7 @@ struct ConversationListView: View {
                 ConversationRowView(conversation: conversation)
                     .tag(conversation)
             }
+            .disabled(appState.isExportingPDF)
             .searchable(text: $state.searchText, prompt: "Search conversations")
             .navigationTitle("Conversations")
             .onChange(of: appState.selectedConversation) { _, newValue in
