@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="Resources/AppIcon.iconset/icon_128x128@2x.png" width="128" height="128" alt="iMessagePrinter icon">
+</p>
+
 # iMessagePrinter
 
 Export any iMessage, SMS, or RCS conversation to a beautifully formatted PDF — complete with timestamps, delivery/read receipts, reactions, contact names, and inline images.
