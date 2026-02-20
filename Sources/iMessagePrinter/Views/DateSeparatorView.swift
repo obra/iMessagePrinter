@@ -4,20 +4,15 @@ struct DateSeparatorView: View {
     let date: Date?
 
     var body: some View {
-        HStack {
-            Rectangle()
-                .fill(.separator)
-                .frame(height: 1)
-
+        HStack(spacing: 12) {
+            VStack { Divider() }
             Text(DateFormatting.formatDateOnly(date))
                 .font(.caption)
+                .fontWeight(.semibold)
                 .foregroundStyle(.secondary)
-                .fontWeight(.medium)
-
-            Rectangle()
-                .fill(.separator)
-                .frame(height: 1)
+                .fixedSize()
+            VStack { Divider() }
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 12)
     }
 }

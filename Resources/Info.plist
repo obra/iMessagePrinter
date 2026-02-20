@@ -21,6 +21,8 @@
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>NSContactsUsageDescription</key>
     <string>iMessagePrinter uses your contacts to display names for phone numbers and email addresses in your message history.</string>
 </dict>

@@ -5,7 +5,7 @@ let package = Package(
     name: "iMessagePrinter",
     platforms: [.macOS(.v14)],
     dependencies: [
-        .package(url: "https://github.com/groue/GRDB.swift.git", "7.0.0"..<"7.9.0")
+        .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0")
     ],
     targets: [
         .executableTarget(

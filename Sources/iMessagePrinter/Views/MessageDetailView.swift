@@ -8,12 +8,9 @@ struct MessageDetailView: View {
             if let conversation = appState.selectedConversation {
                 VStack(spacing: 0) {
                     headerView(conversation)
-                        .padding()
-                        .background(.bar)
 
                     Divider()
 
-                    // Messages area
                     if appState.messages.isEmpty && appState.isLoadingMessages {
                         VStack(spacing: 12) {
                             ProgressView()
@@ -33,19 +30,27 @@ struct MessageDetailView: View {
                             ScrollView {
                                 LazyVStack(alignment: .leading, spacing: 0) {
                                     ForEach(Array(appState.messages.enumerated()), id: \.element.id) { index, message in
-                                        let prevMessage = index > 0 ? appState.messages[index - 1] : nil
+                                        let prev = index > 0 ? appState.messages[index - 1] : nil
 
-                                        if !DateFormatting.isSameDay(message.date, prevMessage?.date) {
+                                        if !DateFormatting.isSameDay(message.date, prev?.date) {
                                             DateSeparatorView(date: message.date)
                                         }
 
                                         MessageRowView(message: message)
+
+                                        // Thin separator between messages from different senders
+                                        if let next = index + 1 < appState.messages.count ? appState.messages[index + 1] : nil,
+                                           next.isFromMe != message.isFromMe {
+                                            Divider()
+                                                .padding(.leading, 52)
+                                                .padding(.vertical, 2)
+                                        }
                                     }
                                 }
-                                .padding()
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
                             }
 
-                            // Progress pill while streaming
                             if appState.isLoadingMessages {
                                 loadingOverlay
                                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -54,7 +59,6 @@ struct MessageDetailView: View {
                     }
                 }
                 .overlay {
-                    // Export overlay
                     if appState.isExportingPDF {
                         exportingOverlay
                     }
@@ -108,35 +112,59 @@ struct MessageDetailView: View {
     }
 
     private func headerView(_ conversation: ConversationInfo) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(conversation.displayName)
-                .font(.title2)
-                .fontWeight(.semibold)
-
+        VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Label("\(appState.messages.count) messages", systemImage: "message")
-                Label(conversation.serviceName, systemImage: "network")
-
-                if conversation.isGroupChat {
-                    Label("\(conversation.participants.count) participants", systemImage: "person.3")
+                // Avatar
+                ZStack {
+                    Circle()
+                        .fill(conversation.isGroupChat ? .blue.opacity(0.12) : .green.opacity(0.12))
+                        .frame(width: 42, height: 42)
+                    Image(systemName: conversation.isGroupChat ? "person.3.fill" : "person.fill")
+                        .font(.system(size: 18))
+                        .foregroundStyle(conversation.isGroupChat ? .blue : .green)
                 }
 
-                if let first = appState.messages.first?.date,
-                   let last = appState.messages.last?.date {
-                    Label(
-                        "\(DateFormatting.formatDateOnly(first)) - \(DateFormatting.formatDateOnly(last))",
-                        systemImage: "calendar"
-                    )
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(conversation.displayName)
+                        .font(.title3.weight(.semibold))
+
+                    HStack(spacing: 8) {
+                        Label("\(appState.messages.count)", systemImage: "message")
+                        Label(conversation.serviceName, systemImage: "network")
+
+                        if conversation.isGroupChat {
+                            Label("\(conversation.participants.count)", systemImage: "person.3")
+                        }
+
+                        if let first = appState.messages.first?.date,
+                           let last = appState.messages.last?.date {
+                            Label(
+                                "\(DateFormatting.formatDateOnly(first)) \u{2013} \(DateFormatting.formatDateOnly(last))",
+                                systemImage: "calendar"
+                            )
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
+
+                Spacer()
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
 
             if conversation.isGroupChat && !conversation.participantNames.isEmpty {
-                Text("Participants: \(conversation.participantNames.joined(separator: ", "))")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                HStack {
+                    Text(conversation.participantNames.joined(separator: ", "))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(2)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 10)
             }
         }
+        .background(.bar)
     }
 }
