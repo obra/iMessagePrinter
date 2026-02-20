@@ -89,7 +89,8 @@ jobs:
             -e "s/<string>1<\/string>/<string>${{ github.run_number }}<\/string>/" \
             Resources/Info.plist > "$APP_BUNDLE/Contents/Info.plist"
 
-        # Copy other resources
+        # Copy resources
+        cp Resources/AppIcon.icns "$APP_BUNDLE/Contents/Resources/"
         cp Resources/iMessagePrinter.entitlements "$APP_BUNDLE/Contents/Resources/" 2>/dev/null || true
 
     - name: Sign app bundle
