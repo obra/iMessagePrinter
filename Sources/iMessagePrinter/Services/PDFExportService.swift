@@ -8,9 +8,9 @@ enum PDFExportService {
     private static let pageHeight: CGFloat = 792
     private static let margin: CGFloat = 54
     private static let usableWidth: CGFloat = 612 - 108
-    private static let timeWidth: CGFloat = 46     // column for outdented timestamps
-    private static let contentIndent: CGFloat = 52 // text starts after timestamp column
-    private static let contentWidth: CGFloat = 612 - 108 - 52
+    private static let timeWidth: CGFloat = 60     // column for outdented timestamps
+    private static let contentIndent: CGFloat = 66 // text starts after timestamp column
+    private static let contentWidth: CGFloat = 612 - 108 - 66
     private static let maxImageWidth: CGFloat = 260
     private static let maxImageHeight: CGFloat = 200
 
@@ -188,7 +188,7 @@ enum PDFExportService {
             }
 
             // ---- Outdented timestamp ----
-            let timeStr = DateFormatting.formatTimeOnly(message.date)
+            let timeStr = outdentedTimestamp(message.date)
             let timeAttr = NSAttributedString(string: timeStr, attributes: [.font: fTime, .foregroundColor: gray50])
 
             // ---- Build message content block ----
@@ -355,6 +355,15 @@ enum PDFExportService {
         ctx.restoreGState()
 
         y -= size.height + 12
+    }
+
+    /// The gutter is narrow, so split the date and time onto separate lines
+    /// instead of letting the frame break the date mid-string.
+    private static func outdentedTimestamp(_ date: Date?) -> String {
+        let stamp = DateFormatting.formatMessageTimestamp(date)
+        let parts = stamp.split(separator: " ", maxSplits: 1)
+        guard parts.count == 2 else { return stamp }
+        return "\(parts[0])\n\(parts[1])"
     }
 
     // MARK: - Footer

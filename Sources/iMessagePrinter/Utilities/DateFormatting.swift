@@ -28,6 +28,13 @@ enum DateFormatting {
         return f
     }()
 
+    private static let messageTimestampFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd h:mm a"
+        return f
+    }()
+
     static func formatDateTime(_ date: Date?) -> String {
         guard let date else { return "" }
         return dateTimeFormatter.string(from: date)
@@ -41,6 +48,13 @@ enum DateFormatting {
     static func formatTimeOnly(_ date: Date?) -> String {
         guard let date else { return "" }
         return timeOnlyFormatter.string(from: date)
+    }
+
+    /// Full date and time for one message, unambiguous outside the timeline
+    /// context (for example when a paragraph is copied into another document).
+    static func formatMessageTimestamp(_ date: Date?) -> String {
+        guard let date else { return "" }
+        return messageTimestampFormatter.string(from: date)
     }
 
     /// Returns true if two dates are on the same calendar day
