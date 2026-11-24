@@ -61,8 +61,8 @@ enum DocxWriter {
         <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="80"/></w:pPr></w:pPrDefault></w:docDefaults>
         <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>
         <w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:rPr><w:b/><w:sz w:val="56"/></w:rPr></w:style>
-        <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="0"/><w:spacing w:before="360" w:after="160"/></w:pPr><w:rPr><w:b/><w:sz w:val="40"/></w:rPr></w:style>
-        <w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:outlineLvl w:val="1"/><w:spacing w:before="280" w:after="120"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/></w:rPr></w:style>
+        <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="360" w:after="160"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="40"/></w:rPr></w:style>
+        <w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="280" w:after="120"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/></w:rPr></w:style>
         <w:style w:type="paragraph" w:styleId="MessageMeta"><w:name w:val="Message Meta"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="120" w:after="20"/></w:pPr><w:rPr><w:b/><w:sz w:val="18"/></w:rPr></w:style>
         <w:style w:type="paragraph" w:styleId="MessageBody"><w:name w:val="Message Body"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:after="80"/></w:pPr><w:rPr><w:sz w:val="21"/></w:rPr></w:style>
         <w:style w:type="paragraph" w:styleId="DateSeparator"><w:name w:val="Date Separator"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="80"/></w:pPr><w:rPr><w:b/><w:color w:val="666666"/><w:sz w:val="18"/></w:rPr></w:style>
@@ -105,8 +105,10 @@ enum DocxWriter {
     static func documentXML(
         conversation: ExportConversation,
         preparedImages: [Int64: PreparedImage],
-        exportedAt: Date
-    ) -> String {
+        exportedAt: Date,
+        onRendered: (Int) -> Void = { _ in },
+        isCancelled: () -> Bool = { false }
+    ) throws -> String {
         var xml = String()
         xml.reserveCapacity(conversation.messages.count * 400 + 4_000)
         xml += """
@@ -144,8 +146,16 @@ enum DocxWriter {
 
         var previousMonth: String?
         var previousDay: String?
+        var drawingIndex = 0
+        let batchSize = 250
 
-        for message in conversation.messages where message.hasContent {
+        for (index, message) in conversation.messages.enumerated() {
+            if index % batchSize == 0 {
+                if isCancelled() { throw CancellationError() }
+                if index > 0 { onRendered(index) }
+            }
+            guard message.hasContent else { continue }
+
             let monthLabel = message.date.map { monthFormatter.string(from: $0) } ?? "Undated"
             if monthLabel != previousMonth {
                 xml += paragraphXML(style: "Heading2", text: monthLabel)
@@ -181,14 +191,18 @@ enum DocxWriter {
                 )
                 if let image = preparedImages[attachment.id],
                    let relationshipID = relationshipIDs[attachment.id] {
+                    drawingIndex += 1
                     xml += imageParagraphXML(
-                        attachmentID: attachment.id,
+                        drawingID: drawingIndex,
                         image: image,
                         relationshipID: relationshipID
                     )
                 }
             }
         }
+
+        if isCancelled() { throw CancellationError() }
+        onRendered(conversation.messages.count)
 
         xml += #"<w:sectPr><w:footerReference w:type="default" r:id="rIdFooter"/><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#
         xml += "</w:body></w:document>"
@@ -258,41 +272,26 @@ enum DocxWriter {
         "<w:p><w:pPr><w:pStyle w:val=\"\(style)\"/></w:pPr>\(runXML(text))</w:p>"
     }
 
-    /// XMLText.runs returns escaped text plus <w:br/> and <w:tab/> tokens.
-    /// Group the text into <w:t> elements so the result is valid WordprocessingML.
+    /// Build one run from escaped text segments so line breaks and tabs are
+    /// always emitted as markup, never as text inside <w:t>.
     private static func runXML(_ text: String) -> String {
-        let markup = XMLText.runs(text)
         var out = "<w:r>"
-        var buffer = String()
-
-        func flush() {
-            guard !buffer.isEmpty else { return }
-            out += "<w:t xml:space=\"preserve\">\(buffer)</w:t>"
-            buffer.removeAll(keepingCapacity: true)
-        }
-
-        var index = markup.startIndex
-        while index < markup.endIndex {
-            if markup[index...].hasPrefix("<w:br/>") {
-                flush()
+        for segment in XMLText.segments(text) {
+            switch segment {
+            case .text(let escaped):
+                out += "<w:t xml:space=\"preserve\">\(escaped)</w:t>"
+            case .lineBreak:
                 out += "<w:br/>"
-                index = markup.index(index, offsetBy: 7)
-            } else if markup[index...].hasPrefix("<w:tab/>") {
-                flush()
+            case .tab:
                 out += "<w:tab/>"
-                index = markup.index(index, offsetBy: 8)
-            } else {
-                buffer.append(markup[index])
-                index = markup.index(after: index)
             }
         }
-        flush()
         out += "</w:r>"
         return out
     }
 
     private static func imageParagraphXML(
-        attachmentID: Int64,
+        drawingID: Int,
         image: PreparedImage,
         relationshipID: String
     ) -> String {
@@ -309,7 +308,7 @@ enum DocxWriter {
         let fileName = XMLText.escape(image.fileName)
 
         return """
-        <w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="\(cx)" cy="\(cy)"/><wp:docPr id="\(attachmentID)" name="Picture \(attachmentID)"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="\(attachmentID)" name="\(fileName)"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="\(relationshipID)"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="\(cx)" cy="\(cy)"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>
+        <w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="\(cx)" cy="\(cy)"/><wp:docPr id="\(drawingID)" name="Picture \(drawingID)"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="\(drawingID)" name="\(fileName)"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="\(relationshipID)"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="\(cx)" cy="\(cy)"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>
         """
     }
 

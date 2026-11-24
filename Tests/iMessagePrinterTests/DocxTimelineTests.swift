@@ -4,7 +4,7 @@ import XCTest
 final class DocxTimelineTests: XCTestCase {
     func testRendersChronologicalTimelineStructure() throws {
         let conversation = makeTimelineConversation()
-        let xml = DocxWriter.documentXML(
+        let xml = try DocxWriter.documentXML(
             conversation: conversation,
             preparedImages: [:],
             exportedAt: makeDate(2024, 2, 10, 12)
@@ -24,7 +24,7 @@ final class DocxTimelineTests: XCTestCase {
     }
 
     func testEscapesBodyTextAndKeepsLineBreaksAndTabs() throws {
-        let xml = DocxWriter.documentXML(
+        let xml = try DocxWriter.documentXML(
             conversation: makeTimelineConversation(),
             preparedImages: [:],
             exportedAt: makeDate(2024, 2, 10, 12)

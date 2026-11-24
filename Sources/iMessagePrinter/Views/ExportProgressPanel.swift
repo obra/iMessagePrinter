@@ -93,6 +93,9 @@ final class ExportProgressPanel: NSPanel {
         progressBar.doubleValue = 100
         statusLabel.stringValue = "Finished"
         cancelButton.isEnabled = false
+        // stopModal() alone leaves the panel on screen; the panel has no close
+        // button, so it would sit there disabled until the app quits.
+        close()
     }
 
     @objc private func cancelTapped() {

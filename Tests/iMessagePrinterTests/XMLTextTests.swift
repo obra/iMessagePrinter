@@ -14,18 +14,18 @@ final class XMLTextTests: XCTestCase {
         XCTAssertEqual(XMLText.escape(input), "abcde")
     }
 
-    func testRunsTurnNewlinesAndTabsIntoWordMarkup() {
+    func testSegmentsTurnNewlinesAndTabsIntoRunMarkers() {
         XCTAssertEqual(
-            XMLText.runs("line 1\nline 2\tend"),
-            "line 1<w:br/>line 2<w:tab/>end"
+            XMLText.segments("line 1\nline 2\tend"),
+            [.text("line 1"), .lineBreak, .text("line 2"), .tab, .text("end")]
         )
     }
 
-    func testRunsPreserveEmojiAndAmpersands() {
-        XCTAssertEqual(XMLText.runs("❤️ & more"), "❤️ &amp; more")
+    func testSegmentsPreserveEmojiAndAmpersands() {
+        XCTAssertEqual(XMLText.segments("❤️ & more"), [.text("❤️ &amp; more")])
     }
 
-    func testRunsHandleCarriageReturnNewline() {
-        XCTAssertEqual(XMLText.runs("a\r\nb"), "a<w:br/>b")
+    func testSegmentsHandleCarriageReturnNewline() {
+        XCTAssertEqual(XMLText.segments("a\r\nb"), [.text("a"), .lineBreak, .text("b")])
     }
 }

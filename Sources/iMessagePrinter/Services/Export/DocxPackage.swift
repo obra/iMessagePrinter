@@ -18,7 +18,11 @@ struct DocxPackage {
     var files: [String: Data]
     var media: [String: URL]
 
-    func write(stagingDirectory: URL, to url: URL) throws {
+    func write(
+        stagingDirectory: URL,
+        to url: URL,
+        isCancelled: () -> Bool = { false }
+    ) throws {
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: stagingDirectory, withIntermediateDirectories: true)
 
@@ -43,19 +47,13 @@ struct DocxPackage {
             try fileManager.copyItem(at: source, to: destination)
         }
 
-        let temporaryArchive = url.deletingLastPathComponent()
-            .appendingPathComponent(".\(UUID().uuidString).docx")
-        try? fileManager.removeItem(at: temporaryArchive)
+        let temporaryArchive = AtomicFile.temporarySibling(of: url)
+        defer { try? fileManager.removeItem(at: temporaryArchive) }
 
-        do {
-            try ZipPackager.zip(stagingDirectory: stagingDirectory, outputURL: temporaryArchive)
-            if fileManager.fileExists(atPath: url.path) {
-                try fileManager.removeItem(at: url)
-            }
-            try fileManager.moveItem(at: temporaryArchive, to: url)
-        } catch {
-            try? fileManager.removeItem(at: temporaryArchive)
-            throw error
+        try ZipPackager.zip(stagingDirectory: stagingDirectory, outputURL: temporaryArchive)
+        if isCancelled() {
+            throw CancellationError()
         }
+        try AtomicFile.publish(temporaryArchive, to: url)
     }
 }

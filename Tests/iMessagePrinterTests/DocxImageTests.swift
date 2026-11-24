@@ -23,7 +23,7 @@ final class DocxImageTests: XCTestCase {
         ))
         XCTAssertLessThanOrEqual(max(prepared.pixelWidth, prepared.pixelHeight), 640)
 
-        let xml = DocxWriter.documentXML(
+        let xml = try DocxWriter.documentXML(
             conversation: conversationWith(attachment),
             preparedImages: images,
             exportedAt: Date()
@@ -57,7 +57,7 @@ final class DocxImageTests: XCTestCase {
         )
         XCTAssertTrue(images.isEmpty)
 
-        let xml = DocxWriter.documentXML(
+        let xml = try DocxWriter.documentXML(
             conversation: conversationWith(attachment),
             preparedImages: images,
             exportedAt: Date()

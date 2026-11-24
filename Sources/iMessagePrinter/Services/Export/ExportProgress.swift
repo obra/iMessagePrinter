@@ -28,6 +28,7 @@ struct ExportProgressEstimator {
     private var phase: ExportProgress.Phase = .preparing
     private var processedMessages = 0
     private var processedImages = 0
+    private var fractionRange: ClosedRange<Double> = 0...1
     private var recentSamples: [(time: TimeInterval, units: Double)] = []
 
     init(
@@ -48,6 +49,12 @@ struct ExportProgressEstimator {
 
     mutating func setPhase(_ phase: ExportProgress.Phase) {
         self.phase = phase
+    }
+
+    /// Map this estimator's local 0...1 progress into a slice of the whole
+    /// export so separate planning and rendering runs never move backward.
+    mutating func setFractionRange(_ range: ClosedRange<Double>) {
+        fractionRange = max(0, range.lowerBound)...min(1, max(range.lowerBound, range.upperBound))
     }
 
     mutating func messageCompleted() {
@@ -72,12 +79,14 @@ struct ExportProgressEstimator {
     }
 
     var snapshot: ExportProgress {
-        let fraction: Double
+        let localFraction: Double
         if totalUnits > 0 {
-            fraction = min(max(completedUnits / totalUnits, 0), 1)
+            localFraction = min(max(completedUnits / totalUnits, 0), 1)
         } else {
-            fraction = (processedMessages + processedImages) > 0 ? 1 : 0
+            localFraction = (processedMessages + processedImages) > 0 ? 1 : 0
         }
+        let fraction = fractionRange.lowerBound
+            + localFraction * (fractionRange.upperBound - fractionRange.lowerBound)
 
         var rate: Double = 0
         if let last = recentSamples.last {
@@ -88,7 +97,7 @@ struct ExportProgressEstimator {
         }
 
         let remaining: TimeInterval?
-        if fraction >= 0.1, fraction < 1, rate > 0 {
+        if localFraction >= 0.1, localFraction < 1, rate > 0 {
             remaining = (totalUnits - completedUnits) / rate
         } else {
             remaining = nil

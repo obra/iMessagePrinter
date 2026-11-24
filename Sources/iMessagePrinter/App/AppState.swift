@@ -318,77 +318,104 @@ final class AppState {
             cancelFlag.cancel()
         }
 
+        let relay = ExportProgressRelay()
         let progressHandler: (ExportProgress) -> Void = { progress in
-            DispatchQueue.main.async {
-                progressPanel.update(progress)
-            }
+            relay.update(progress)
         }
 
-        DispatchQueue.main.async { [self] in
-            Task.detached { [self] in
-                do {
-                    let planned = try ExportPlanner(
-                        db: database,
-                        handleMap: handles,
-                        contactResolver: contactResolver
-                    ).plan(
-                        conversation: conversation,
+        var modalRunning = false
+        var finished = false
+        var timer: Timer?
+
+        /// Single terminal path. Polled by a modal-mode timer and also invoked
+        /// from a main-queue callback, so a starved queue cannot strand the UI.
+        func drain() {
+            guard !finished else { return }
+            let snapshot = relay.take()
+            if let progress = snapshot.progress {
+                progressPanel.update(progress)
+            }
+            guard let outcome = snapshot.outcome else { return }
+
+            finished = true
+            progressPanel.finish()
+            switch outcome {
+            case .success:
+                NSWorkspace.shared.open(url)
+            case .failure(let error) where error is CancellationError:
+                progressPanel.setStatus("Cancelled")
+            case .failure(let error):
+                progressPanel.setStatus("Export failed")
+                errorMessage = "\(format == .docx ? "Word" : "PDF") export failed: \(error.localizedDescription)"
+            }
+            exportCoordinator.end()
+            isExporting = false
+            if modalRunning {
+                NSApp.stopModal()
+            }
+            timer?.invalidate()
+        }
+
+        timer = Timer(timeInterval: 0.1, repeats: true) { _ in
+            drain()
+        }
+        if let timer {
+            RunLoop.main.add(timer, forMode: .modalPanel)
+            RunLoop.main.add(timer, forMode: .default)
+        }
+
+        let task = Task.detached { [self] in
+            let outcome: Result<Void, Error>
+            do {
+                let planned = try ExportPlanner(
+                    db: database,
+                    handleMap: handles,
+                    contactResolver: contactResolver
+                ).plan(
+                    conversation: conversation,
+                    imageMode: imageMode,
+                    progress: progressHandler,
+                    isCancelled: { cancelFlag.isCancelled }
+                )
+
+                if cancelFlag.isCancelled {
+                    throw CancellationError()
+                }
+
+                switch format {
+                case .pdf:
+                    try PDFExportService.export(
+                        conversation: planned,
                         imageMode: imageMode,
+                        to: url,
                         progress: progressHandler,
                         isCancelled: { cancelFlag.isCancelled }
                     )
-
-                    if cancelFlag.isCancelled {
-                        throw CancellationError()
-                    }
-
-                    switch format {
-                    case .pdf:
-                        try PDFExportService.export(
-                            conversation: planned,
-                            imageMode: imageMode,
-                            to: url,
-                            progress: progressHandler,
-                            isCancelled: { cancelFlag.isCancelled }
-                        )
-                    case .docx:
-                        try DocxExportService.export(
-                            conversation: planned,
-                            imageMode: imageMode,
-                            to: url,
-                            progress: progressHandler,
-                            isCancelled: { cancelFlag.isCancelled }
-                        )
-                    }
-
-                    await MainActor.run {
-                        progressPanel.finish()
-                        NSApp.stopModal()
-                        exportCoordinator.end()
-                        isExporting = false
-                        NSWorkspace.shared.open(url)
-                    }
-                } catch is CancellationError {
-                    await MainActor.run {
-                        progressPanel.finish()
-                        progressPanel.setStatus("Cancelled")
-                        NSApp.stopModal()
-                        exportCoordinator.end()
-                        isExporting = false
-                    }
-                } catch {
-                    await MainActor.run {
-                        progressPanel.finish()
-                        progressPanel.setStatus("Export failed")
-                        NSApp.stopModal()
-                        exportCoordinator.end()
-                        isExporting = false
-                        errorMessage = "\(format == .docx ? "Word" : "PDF") export failed: \(error.localizedDescription)"
-                    }
+                case .docx:
+                    try DocxExportService.export(
+                        conversation: planned,
+                        imageMode: imageMode,
+                        to: url,
+                        progress: progressHandler,
+                        isCancelled: { cancelFlag.isCancelled }
+                    )
                 }
+                outcome = .success(())
+            } catch {
+                outcome = .failure(error)
+            }
+
+            relay.finish(outcome)
+            DispatchQueue.main.async {
+                drain()
             }
         }
 
+        modalRunning = true
         NSApp.runModal(for: progressPanel)
+        modalRunning = false
+        timer?.invalidate()
+        drain()
+        _ = task
     }
 }

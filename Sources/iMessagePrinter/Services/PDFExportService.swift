@@ -55,15 +55,19 @@ enum PDFExportService {
             throw CancellationError()
         }
 
+        let temporaryURL = AtomicFile.temporarySibling(of: url)
+        defer { try? FileManager.default.removeItem(at: temporaryURL) }
+
         var estimator = ExportProgressEstimator(
             totalMessages: conversation.messages.count,
             totalImages: 0
         )
+        estimator.setFractionRange(0.1...0.95)
         estimator.setPhase(.rendering)
         progress(estimator.snapshot)
 
         var mediaBox = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
-        guard let ctx = CGContext(url as CFURL, mediaBox: &mediaBox, nil) else {
+        guard let ctx = CGContext(temporaryURL as CFURL, mediaBox: &mediaBox, nil) else {
             throw ExportError.cannotCreatePDF
         }
 
@@ -157,7 +161,6 @@ enum PDFExportService {
         for message in conversation.messages {
             if isCancelled() {
                 ctx.closePDF()
-                try? FileManager.default.removeItem(at: url)
                 throw CancellationError()
             }
             estimator.messageCompleted()
@@ -308,8 +311,17 @@ enum PDFExportService {
             y -= 8 // spacing between messages
         }
 
+        if isCancelled() {
+            ctx.closePDF()
+            throw CancellationError()
+        }
         endPage()
         ctx.closePDF()
+
+        if isCancelled() {
+            throw CancellationError()
+        }
+        try AtomicFile.publish(temporaryURL, to: url)
 
         estimator.setPhase(.finishing)
         var final = estimator.snapshot

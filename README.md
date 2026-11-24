@@ -59,7 +59,7 @@ After you choose a destination, the export runs in a modal panel with progress, 
 
 ## Performance
 
-On a 10,885-message conversation with 750 images, the current release exports in about 0.3 seconds with no images, 16 seconds with thumbnails, and 6 seconds at full resolution. See [the benchmark](docs/superpowers/benchmarks/2026-11-24-docx.md) for the before/after numbers.
+On a 10,885-message conversation with 750 images, the current release exports in about 0.2 seconds with no images, 19 seconds with thumbnails, and 10 seconds at full resolution. See [the benchmark](docs/superpowers/benchmarks/2026-11-24-docx.md) for the before/after numbers.
 
 ## How It Works
 

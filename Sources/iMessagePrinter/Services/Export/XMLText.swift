@@ -1,6 +1,12 @@
 import Foundation
 
 enum XMLText {
+    enum RunSegment: Equatable {
+        case text(String)
+        case lineBreak
+        case tab
+    }
+
     /// Escape text for XML character data.
     static func escape(_ text: String) -> String {
         var out = String()
@@ -10,7 +16,9 @@ enum XMLText {
             if (0x00...0x08).contains(value)
                 || value == 0x0B
                 || value == 0x0C
-                || (0x0E...0x1F).contains(value) {
+                || (0x0E...0x1F).contains(value)
+                || value == 0xFFFE
+                || value == 0xFFFF {
                 continue
             }
             switch scalar {
@@ -24,29 +32,29 @@ enum XMLText {
         return out
     }
 
-    /// Escape text and turn newlines and tabs into Word run markup.
-    static func runs(_ text: String) -> String {
+    /// Split text into escaped text and Word line-break/tab run segments.
+    static func segments(_ text: String) -> [RunSegment] {
         let normalized = text
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
 
-        var parts: [String] = []
+        var parts: [RunSegment] = []
         var current = String()
         for character in normalized {
             switch character {
             case "\n":
-                parts.append(escape(current))
-                parts.append("<w:br/>")
+                if !current.isEmpty { parts.append(.text(escape(current))) }
+                parts.append(.lineBreak)
                 current.removeAll(keepingCapacity: true)
             case "\t":
-                parts.append(escape(current))
-                parts.append("<w:tab/>")
+                if !current.isEmpty { parts.append(.text(escape(current))) }
+                parts.append(.tab)
                 current.removeAll(keepingCapacity: true)
             default:
                 current.append(character)
             }
         }
-        parts.append(escape(current))
-        return parts.joined()
+        if !current.isEmpty { parts.append(.text(escape(current))) }
+        return parts
     }
 }

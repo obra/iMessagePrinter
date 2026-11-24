@@ -30,6 +30,7 @@ struct ExportPlanner {
             totalMessages: messageRecords.count,
             totalImages: 0
         )
+        estimator.setFractionRange(0...0.1)
         estimator.setPhase(.preparing)
 
         var messages: [ExportMessage] = []
