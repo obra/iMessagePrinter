@@ -59,30 +59,42 @@ Fewer lines initially. Loses precise heading/style control, image placement is a
 `ExportScope`:
 
 - `.thisConversation` — the selected chat, group or 1:1.
-- `.allDirectWithCounterparty` — every chat with exactly one participant whose handle belongs to the selected counterparty.
+- `.allDirectWithCounterparty` — every chat whose distinct participant set has exactly one handle and that handle belongs to the selected counterparty.
+
+"Direct" is defined by participant count, not by `chat.style`. Four chats in the current database have `style == 43` but one participant; one has three messages. They are 1:1 in substance, so include them when the handle matches. Group chats are chats with two or more distinct participant handles. Deduplicate `chat_handle_join` rows before counting.
 
 Counterparty identity:
 
 - Start from the selected 1:1 chat's sole participant handle.
-- If Contacts access is available, expand to every handle in the app's conversation list that resolves to the same `CNContact.identifier`. This catches a person's second phone number or email.
+- If Contacts access is available, expand to every handle in the database's chat list that resolves to the same `CNContact.identifier`. This catches a person's second phone number or email.
 - If Contacts access is absent, use the exact handle only.
 - Always include the selected conversation.
-- Sort conversations by first-message date ascending. Exclude chats with zero messages.
+- Exclude chats with zero messages.
+- Sort conversations by first-message date ascending.
 - A group chat selected in the sidebar can export `.thisConversation`; `.allDirectWithCounterparty` is offered only for 1:1 selections because a group has no single counterparty.
 
 The Word export sheet shows the resolved names and handles and a live summary: conversation count, message count, image count. Defaults: scope = all direct conversations when available, images = thumbnails.
+
+Scope resolution does not trust the progressively loaded `AppState.conversations` list. `loadConversations()` appends in batches, so a user can select a chat and export before the list is complete. Resolution runs against a fresh database snapshot:
+
+- `DatabaseService.fetchAllChatHandles()` returns every chat's distinct handles in one query, instead of one query per chat.
+- The planner builds conversation descriptors from `fetchConversations()` plus that bulk handle map.
+- The Word export sheet shows "Finding conversations…" until resolution finishes, then the exact counts.
+- The export re-resolves the scope at start, so a stale sheet cannot export a subset.
 
 ### 2. Shared export data pipeline
 
 New export path, separate from the UI's progressive message loader:
 
-- `ExportPlanner` takes `[ConversationInfo]` plus `DatabaseService` and produces `[ExportConversation]`.
+- `ExportPlanner` takes a resolved scope plus `DatabaseService` and produces `[ExportConversation]` from a fresh database read.
 - `ExportConversation` holds name, service, participants, and `[ExportMessage]`.
 - `ExportMessage` mirrors `DisplayMessage` without AppKit image objects. Attachments carry path, MIME, size, and image dimensions, not `NSImage`.
 - Text still comes from `text` or `AttributedBodyParser`.
 - Reactions are aggregated per chat with the existing `ReactionAggregator`.
 - `DatabaseService` gains a bulk attachment fetch: one query for all messages in all selected chats, returned keyed by message ROWID. This removes the current N+1 `fetchAttachments` per message.
 - This pipeline is used by both PDF and Word export, so the PDF also stops doing N+1 queries. The UI loader keeps its current selection behavior.
+- PDF scope stays `.thisConversation`, with the selected conversation captured before the export starts. PDF does not gain the all-direct scope.
+- Both exports read messages from the planner rather than `AppState.messages`. The loaded UI messages and the planner read the same rows; the planner is a snapshot taken at export start, so a selection change during export cannot change the output.
 
 ### 3. `.docx` writer
 
@@ -125,7 +137,8 @@ Images:
 - HEIC/GIF/other formats convert to JPEG at quality 0.9 for Word compatibility.
 - Thumbnails use ImageIO (`CGImageSourceCreateThumbnailAtIndex`) at max 640×480, JPEG quality 0.85.
 - Display size comes from pixel dimensions at 96 DPI, capped at 4.5" wide and 6" tall.
-- Undecodable images produce a filename label, not a failure.
+- An attachment is an exportable image when `mime_type` starts with `image/`, it has a resolved path, and the file exists. `transfer_state` is not used. This is the same predicate for the sheet's count, the progress denominator, and the writer.
+- Undecodable or missing images produce a filename label, not a failure.
 
 Text safety:
 
@@ -157,7 +170,7 @@ Flow: configure (Word only) → save panel → modal progress panel → open the
 - ETA line: "About 20 seconds remaining", suppressed below 10% completion.
 - Cancel button.
 
-`ExportSession` owns the export task, a cancellation flag, and progress state. It is the only entry point for exports. `AppState.beginExport()` returns false if a session is active. This is the overlap fix, independent of UI disabling. The selected `messages` are captured before the task starts. The progress panel's `runModal` also blocks the rest of the app.
+`ExportSession` owns the export task, a cancellation flag, and progress state. It is the only entry point for exports. `AppState.beginExport()` returns false if a session is active. This is the overlap fix, independent of UI disabling. The selected conversation and scope are captured before the task starts. The progress panel's `runModal` also blocks the rest of the app.
 
 ETA uses weighted units: each message is 1, each prepared image is 3. Completion time is measured from the session start; ETA = elapsed / fraction − elapsed, smoothed over recent samples.
 
@@ -171,7 +184,7 @@ Cancellation:
 
 Correctness first, then measure and optimize.
 
-Baseline targets on the largest real direct chat (chat 2: 10,994 messages, 750 images, 1.4 GB originals):
+Baseline targets on the largest real direct chat (chat 2: 10,994 messages, 750 exportable images, 1.4 GB of existing image files):
 
 - No images: under 3 seconds.
 - Thumbnails: under 10 seconds.
@@ -190,7 +203,16 @@ Optimizations, in order:
 
 A benchmark test gated by `IMESSAGEPRINTER_BENCHMARK=1` reads the real database, exports the largest direct chat in each image mode, and prints wall time and output size. It runs locally; CI skips it when the database is unavailable.
 
-### 6. Tests
+### 6. Builder-check resolutions
+
+The independent builder check raised four questions. They are resolved here:
+
+1. A direct chat is one distinct participant handle, regardless of `chat.style`. Chats with two or more distinct handles are groups. This is the safer definition for a legal export and matches the user's "direct chats only" answer.
+2. Scope resolution uses a fresh database snapshot with a bulk chat-handle query. It does not depend on the partially loaded UI list and does not require waiting for conversation loading.
+3. Both PDF and Word read messages from the planner snapshot. PDF scope stays this-conversation. The selected conversation is captured at click time.
+4. Image counts and embedding use the same predicate: `image/*`, a resolved path, and an existing file. `transfer_state` is ignored. Chat 2 has 855 `image/*` rows but only 750 existing files; 750 is the exportable count, and the rest are labeled only.
+
+### 7. Tests
 
 Add `Tests/iMessagePrinterTests` and a `.testTarget` in `Package.swift`.
 
@@ -239,7 +261,7 @@ Manual acceptance:
 - Two exports cannot run at once, and changing selection mid-export cannot change the exported data.
 - Large-export performance is measured before and after optimization, with numbers recorded in the final report.
 
-## Calls made without asking
+## Calls made
 
 - Direct chats only for counterparty scope, per Jesse's answer.
 - Separate section per conversation rather than one interleaved timeline.
