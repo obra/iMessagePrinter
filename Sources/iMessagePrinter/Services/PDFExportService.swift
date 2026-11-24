@@ -42,8 +42,6 @@ enum PDFExportService {
 
     // MARK: - Attachment Mode
 
-    typealias AttachmentMode = ExportImageMode
-
     // MARK: - Export
 
     static func export(
@@ -319,72 +317,6 @@ enum PDFExportService {
         final.estimatedRemaining = nil
         progress(final)
     }
-
-    /// Temporary adapter for the old DisplayMessage-based caller until Task 9.
-    static func export(
-        conversation: ConversationInfo,
-        messages: [DisplayMessage],
-        attachmentMode: AttachmentMode,
-        to url: URL
-    ) throws {
-        let exported = ExportConversation(
-            chatRowID: conversation.chatRowID,
-            chatGUID: conversation.chatGUID,
-            displayName: conversation.displayName,
-            participants: conversation.participants,
-            participantNames: conversation.participantNames,
-            serviceName: conversation.serviceName,
-            isGroupChat: conversation.isGroupChat,
-            messages: messages.map(exportMessage(from:))
-        )
-        try export(
-            conversation: exported,
-            imageMode: attachmentMode,
-            to: url,
-            progress: { _ in },
-            isCancelled: { false }
-        )
-    }
-
-    private static func exportMessage(from message: DisplayMessage) -> ExportMessage {
-        ExportMessage(
-            id: message.id,
-            guid: message.guid,
-            text: message.text,
-            senderName: message.senderName,
-            senderID: message.senderID,
-            isFromMe: message.isFromMe,
-            date: message.date,
-            dateRead: message.dateRead,
-            dateDelivered: message.dateDelivered,
-            service: message.service,
-            isDelivered: message.isDelivered,
-            isRead: message.isRead,
-            isSent: message.isSent,
-            isSystemMessage: message.isSystemMessage,
-            isEdited: message.isEdited,
-            isRetracted: message.isRetracted,
-            replyToGUID: message.replyToGUID,
-            threadOriginatorGUID: message.threadOriginatorGUID,
-            groupTitle: message.groupTitle,
-            groupActionType: message.groupActionType,
-            reactions: message.reactions,
-            attachments: message.attachments.map { attachment in
-                ExportAttachment(
-                    id: attachment.id,
-                    filename: attachment.filename,
-                    transferName: attachment.transferName,
-                    mimeType: attachment.mimeType,
-                    totalBytes: attachment.totalBytes,
-                    isImage: attachment.isImage,
-                    resolvedPath: attachment.resolvedPath,
-                    formattedSize: attachment.formattedSize
-                )
-            }
-        )
-    }
-
-    // MARK: - Date Separator
 
     private static func drawDateSeparator(ctx: CGContext, y: inout CGFloat, date: Date?) {
         let text = DateFormatting.formatDateOnly(date)

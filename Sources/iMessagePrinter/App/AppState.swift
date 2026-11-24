@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import UniformTypeIdentifiers
 
 @Observable
 final class AppState {
@@ -10,7 +11,7 @@ final class AppState {
     var searchText = ""
     var isLoadingConversations = false
     var isLoadingMessages = false
-    var isExportingPDF = false
+    var isExporting = false
     var errorMessage: String?
     var loadedMessageCount = 0
     var totalMessageCount = 0
@@ -21,6 +22,7 @@ final class AppState {
     private var contactResolver = ContactResolver()
     private var handleMap: [Int64: HandleRecord] = [:]
     private var messageLoadTask: Task<Void, Never>?
+    private let exportCoordinator = ExportCoordinator()
 
     var filteredConversations: [ConversationInfo] {
         if searchText.isEmpty { return conversations }
@@ -281,43 +283,112 @@ final class AppState {
         }
     }
 
-    func exportPDF() {
-        guard let conversation = selectedConversation, !messages.isEmpty else { return }
-        isExportingPDF = true
+    func export(_ format: ExportFormat) {
+        guard !isExporting,
+              let conversation = selectedConversation,
+              !messages.isEmpty,
+              let database = databaseService else { return }
 
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.pdf]
-        panel.nameFieldStringValue = "\(conversation.displayName) - Messages.pdf"
+        let savePanel = NSSavePanel()
+        switch format {
+        case .pdf:
+            savePanel.allowedContentTypes = [.pdf]
+        case .docx:
+            savePanel.allowedContentTypes = [UTType(filenameExtension: "docx") ?? .data]
+        }
+        savePanel.nameFieldStringValue = conversation.displayName + format.defaultNameSuffix
 
-        // Accessory view with attachment options
         let accessory = ExportAccessoryView()
-        panel.accessoryView = accessory
+        savePanel.accessoryView = accessory
 
-        guard panel.runModal() == .OK, let url = panel.url else {
-            isExportingPDF = false
-            return
+        guard savePanel.runModal() == .OK, let url = savePanel.url else { return }
+
+        let imageMode = accessory.selectedMode
+        let handles = handleMap
+
+        guard exportCoordinator.begin() else { return }
+        isExporting = true
+
+        let progressPanel = ExportProgressPanel(
+            format: format,
+            conversationName: conversation.displayName
+        )
+        let cancelFlag = CancelFlag()
+        progressPanel.onCancel = {
+            cancelFlag.cancel()
         }
 
-        let attachmentMode = accessory.selectedMode
+        let progressHandler: (ExportProgress) -> Void = { progress in
+            DispatchQueue.main.async {
+                progressPanel.update(progress)
+            }
+        }
 
-        Task.detached { [self] in
-            do {
-                try PDFExportService.export(
-                    conversation: conversation,
-                    messages: self.messages,
-                    attachmentMode: attachmentMode,
-                    to: url
-                )
-                await MainActor.run {
-                    self.isExportingPDF = false
-                    NSWorkspace.shared.open(url)
-                }
-            } catch {
-                await MainActor.run {
-                    self.errorMessage = "PDF export failed: \(error.localizedDescription)"
-                    self.isExportingPDF = false
+        DispatchQueue.main.async { [self] in
+            Task.detached { [self] in
+                do {
+                    let planned = try ExportPlanner(
+                        db: database,
+                        handleMap: handles,
+                        contactResolver: contactResolver
+                    ).plan(
+                        conversation: conversation,
+                        imageMode: imageMode,
+                        progress: progressHandler,
+                        isCancelled: { cancelFlag.isCancelled }
+                    )
+
+                    if cancelFlag.isCancelled {
+                        throw CancellationError()
+                    }
+
+                    switch format {
+                    case .pdf:
+                        try PDFExportService.export(
+                            conversation: planned,
+                            imageMode: imageMode,
+                            to: url,
+                            progress: progressHandler,
+                            isCancelled: { cancelFlag.isCancelled }
+                        )
+                    case .docx:
+                        try DocxExportService.export(
+                            conversation: planned,
+                            imageMode: imageMode,
+                            to: url,
+                            progress: progressHandler,
+                            isCancelled: { cancelFlag.isCancelled }
+                        )
+                    }
+
+                    await MainActor.run {
+                        progressPanel.finish()
+                        NSApp.stopModal()
+                        exportCoordinator.end()
+                        isExporting = false
+                        NSWorkspace.shared.open(url)
+                    }
+                } catch is CancellationError {
+                    await MainActor.run {
+                        progressPanel.finish()
+                        progressPanel.setStatus("Cancelled")
+                        NSApp.stopModal()
+                        exportCoordinator.end()
+                        isExporting = false
+                    }
+                } catch {
+                    await MainActor.run {
+                        progressPanel.finish()
+                        progressPanel.setStatus("Export failed")
+                        NSApp.stopModal()
+                        exportCoordinator.end()
+                        isExporting = false
+                        errorMessage = "\(format == .docx ? "Word" : "PDF") export failed: \(error.localizedDescription)"
+                    }
                 }
             }
         }
+
+        NSApp.runModal(for: progressPanel)
     }
 }

@@ -58,19 +58,19 @@ struct MessageDetailView: View {
                         }
                     }
                 }
-                .overlay {
-                    if appState.isExportingPDF {
-                        exportingOverlay
-                    }
-                }
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            appState.exportPDF()
+                        Menu {
+                            Button("Export PDF…") {
+                                appState.export(.pdf)
+                            }
+                            Button("Export Word Document…") {
+                                appState.export(.docx)
+                            }
                         } label: {
-                            Label("Export PDF", systemImage: "arrow.down.doc")
+                            Label("Export", systemImage: "arrow.down.doc")
                         }
-                        .disabled(appState.messages.isEmpty || appState.isExportingPDF || appState.isLoadingMessages)
+                        .disabled(appState.messages.isEmpty || appState.isExporting || appState.isLoadingMessages)
                     }
                 }
             } else {
@@ -95,20 +95,6 @@ struct MessageDetailView: View {
         .padding(.vertical, 10)
         .background(.regularMaterial, in: Capsule())
         .padding(.bottom, 12)
-    }
-
-    private var exportingOverlay: some View {
-        VStack(spacing: 12) {
-            ProgressView()
-                .controlSize(.large)
-            Text("Exporting PDF...")
-                .font(.headline)
-            Text("\(appState.messages.count) messages")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(32)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
     }
 
     private func headerView(_ conversation: ConversationInfo) -> some View {
