@@ -36,19 +36,50 @@ final class DocxBenchmarkTests: XCTestCase {
             print("BENCH mode=\(mode.rawValue) seconds=\(seconds) bytes=\(bytes) msgs=\(planned.messages.count) images=\(imageCount)")
         }
     }
+
+    func testWritesManualAcceptanceDocx() throws {
+        guard let directoryPath = ProcessInfo.processInfo.environment["IMESSAGEPRINTER_ACCEPTANCE_DIR"] else {
+            throw XCTSkip("Set IMESSAGEPRINTER_ACCEPTANCE_DIR to write a real-conversation docx")
+        }
+        let db = try DatabaseService()
+        let raw = try XCTUnwrap(try db.fetchConversations().max { $0.messageCount < $1.messageCount })
+        let conversation = try conversationInfo(raw, db: db)
+        let directory = URL(fileURLWithPath: directoryPath, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let out = directory.appendingPathComponent("LargestConversation.docx")
+
+        try DocxExportService.export(
+            conversation: try plan(conversation, mode: .thumbnail, db: db),
+            imageMode: .thumbnail,
+            to: out,
+            progress: { _ in },
+            isCancelled: { false }
+        )
+        print("ACCEPTANCE \(out.path)")
+    }
 }
 
 private func conversationInfo(_ raw: RawConversation, db: DatabaseService) throws -> ConversationInfo {
     let handles = try db.fetchHandlesForChat(chatRowID: raw.rowID)
     let resolver = ContactResolver()
+    let participantNames = handles.map { resolver.displayName(for: $0.id) }
+    let displayName: String
+    if let name = raw.displayName, !name.isEmpty {
+        displayName = name
+    } else if participantNames.count == 1 {
+        displayName = participantNames[0]
+    } else if !participantNames.isEmpty {
+        displayName = participantNames.joined(separator: ", ")
+    } else {
+        displayName = raw.chatIdentifier ?? "Unknown"
+    }
+
     return ConversationInfo(
         chatRowID: raw.rowID,
         chatGUID: raw.guid,
-        displayName: raw.displayName
-            ?? handles.first.map { resolver.displayName(for: $0.id) }
-            ?? "Unknown",
+        displayName: displayName,
         participants: handles.map(\.id),
-        participantNames: handles.map { resolver.displayName(for: $0.id) },
+        participantNames: participantNames,
         messageCount: raw.messageCount,
         lastMessageDate: DateFormatting.dateFromAppleTimestamp(raw.lastMessageDate),
         lastMessagePreview: nil,
