@@ -9,10 +9,10 @@ final class DatabaseService {
         return "\(home)/Library/Messages/chat.db"
     }()
 
-    init() throws {
+    init(path: String = DatabaseService.chatDBPath) throws {
         var config = Configuration()
         config.readonly = true
-        dbQueue = try DatabaseQueue(path: Self.chatDBPath, configuration: config)
+        dbQueue = try DatabaseQueue(path: path, configuration: config)
     }
 
     // MARK: - Conversations

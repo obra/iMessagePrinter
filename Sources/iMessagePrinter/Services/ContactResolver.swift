@@ -8,13 +8,7 @@ final class ContactResolver: @unchecked Sendable {
     private var hasAccess = false
     private var didBuildLookup = false
 
-    init() {
-        let status = CNContactStore.authorizationStatus(for: .contacts)
-        if status == .authorized {
-            hasAccess = true
-            buildLookupTable()
-        }
-    }
+    init() {}
 
     /// Awaitable access request — call before any name resolution
     func ensureAccess() async {

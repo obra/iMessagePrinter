@@ -15,7 +15,7 @@ let package = Package(
         ),
         .testTarget(
             name: "iMessagePrinterTests",
-            dependencies: ["iMessagePrinter"],
+            dependencies: ["iMessagePrinter", .product(name: "GRDB", package: "GRDB.swift")],
             path: "Tests/iMessagePrinterTests"
         )
     ]
