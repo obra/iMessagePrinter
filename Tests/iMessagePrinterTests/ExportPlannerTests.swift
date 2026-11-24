@@ -29,6 +29,18 @@ final class ExportPlannerTests: XCTestCase {
         XCTAssertEqual(message.attachments.first?.id, 1)
     }
 
+    func testBulkFetchReturnsOnlySelectedChatAttachments() throws {
+        let fixture = try makeFixture()
+        let grouped = try fixture.db.fetchAttachments(chatRowID: 1)
+        XCTAssertEqual(grouped[2]?.map(\.rowID), [1])
+        XCTAssertEqual(grouped[3]?.map(\.rowID), [2])
+        XCTAssertNil(grouped[4])
+
+        let plan = try planChat1(fixture)
+        XCTAssertEqual(plan.messages.first { $0.id == 2 }?.attachments.count, 1)
+        XCTAssertEqual(plan.messages.first { $0.id == 3 }?.attachments.count, 1)
+    }
+
     func testSnapshotIgnoresLaterDatabaseChanges() throws {
         let fixture = try makeFixture()
         let plan = try planChat1(fixture)

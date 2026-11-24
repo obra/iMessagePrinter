@@ -23,6 +23,7 @@ struct ExportPlanner {
             handleMap: handleMap,
             contactResolver: contactResolver
         )
+        let attachmentsByMessage = try db.fetchAttachments(chatRowID: conversation.chatRowID)
         let messageRecords = records.filter { !$0.isReaction && !$0.isReactionRemoval }
 
         var estimator = ExportProgressEstimator(
@@ -57,20 +58,17 @@ struct ExportPlanner {
                 senderName = "Unknown"
             }
 
-            var attachments: [ExportAttachment] = []
-            if record.cacheHasAttachments {
-                attachments = try db.fetchAttachments(messageRowID: record.rowID).map { attachment in
-                    ExportAttachment(
-                        id: attachment.rowID,
-                        filename: attachment.filename,
-                        transferName: attachment.transferName,
-                        mimeType: attachment.mimeType,
-                        totalBytes: attachment.totalBytes,
-                        isImage: attachment.isImage,
-                        resolvedPath: attachment.resolvedPath,
-                        formattedSize: attachment.formattedSize
-                    )
-                }
+            let attachments = (attachmentsByMessage[record.rowID] ?? []).map { attachment in
+                ExportAttachment(
+                    id: attachment.rowID,
+                    filename: attachment.filename,
+                    transferName: attachment.transferName,
+                    mimeType: attachment.mimeType,
+                    totalBytes: attachment.totalBytes,
+                    isImage: attachment.isImage,
+                    resolvedPath: attachment.resolvedPath,
+                    formattedSize: attachment.formattedSize
+                )
             }
 
             messages.append(ExportMessage(

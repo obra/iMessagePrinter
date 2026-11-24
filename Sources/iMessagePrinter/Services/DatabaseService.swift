@@ -128,6 +128,28 @@ final class DatabaseService {
             return try AttachmentRecord.fetchAll(db, sql: sql, arguments: [messageRowID])
         }
     }
+
+    func fetchAttachments(chatRowID: Int64) throws -> [Int64: [AttachmentRecord]] {
+        try dbQueue.read { db in
+            let sql = """
+                SELECT
+                    a.ROWID, a.guid, a.filename, a.mime_type, a.uti,
+                    a.transfer_name, a.total_bytes, a.transfer_state, a.is_outgoing,
+                    maj.message_id AS message_id
+                FROM attachment a
+                JOIN message_attachment_join maj ON maj.attachment_id = a.ROWID
+                JOIN chat_message_join cmj ON cmj.message_id = maj.message_id
+                WHERE cmj.chat_id = ?
+                """
+            let records = try AttachmentRecord.fetchAll(db, sql: sql, arguments: [chatRowID])
+            var grouped: [Int64: [AttachmentRecord]] = [:]
+            for record in records {
+                guard let messageID = record.messageID else { continue }
+                grouped[messageID, default: []].append(record)
+            }
+            return grouped
+        }
+    }
 }
 
 // MARK: - Raw Conversation (intermediate fetch result)

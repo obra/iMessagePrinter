@@ -16,15 +16,17 @@ enum ImagePreparer {
         try? FileManager.default.createDirectory(at: mediaDirectory, withIntermediateDirectories: true)
 
         var prepared: [Int64: PreparedImage] = [:]
+        let resultLock = NSLock()
 
-        for attachment in attachments {
-            if isCancelled() { break }
+        DispatchQueue.concurrentPerform(iterations: attachments.count) { index in
+            if isCancelled() { return }
+            let attachment = attachments[index]
             guard attachment.isImage,
                   let path = attachment.resolvedPath,
-                  FileManager.default.fileExists(atPath: path) else { continue }
+                  FileManager.default.fileExists(atPath: path) else { return }
 
             let sourceURL = URL(fileURLWithPath: path)
-            guard let source = CGImageSourceCreateWithURL(sourceURL as CFURL, nil) else { continue }
+            guard let source = CGImageSourceCreateWithURL(sourceURL as CFURL, nil) else { return }
 
             let image: PreparedImage?
             switch mode {
@@ -45,10 +47,12 @@ enum ImagePreparer {
                 )
             }
 
-            if let image {
-                prepared[attachment.id] = image
-                onPrepared(prepared.count)
-            }
+            guard let image else { return }
+
+            resultLock.lock()
+            prepared[attachment.id] = image
+            onPrepared(prepared.count)
+            resultLock.unlock()
         }
 
         return prepared

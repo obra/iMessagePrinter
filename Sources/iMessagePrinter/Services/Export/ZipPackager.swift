@@ -4,7 +4,7 @@ enum ZipPackager {
     static func zip(stagingDirectory: URL, outputURL: URL) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
-        process.arguments = ["-X", "-q", "-r", outputURL.path, ".", "-x", ".*"]
+        process.arguments = ["-X", "-q", "-0", "-r", outputURL.path, ".", "-x", ".*"]
         process.currentDirectoryURL = stagingDirectory
 
         let errorPipe = Pipe()

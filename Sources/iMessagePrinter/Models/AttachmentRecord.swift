@@ -11,6 +11,7 @@ struct AttachmentRecord: FetchableRecord, Decodable {
     var totalBytes: Int64
     var transferState: Int64
     var isOutgoing: Bool
+    var messageID: Int64?
 
     enum CodingKeys: String, CodingKey {
         case rowID = "ROWID"
@@ -22,6 +23,7 @@ struct AttachmentRecord: FetchableRecord, Decodable {
         case totalBytes = "total_bytes"
         case transferState = "transfer_state"
         case isOutgoing = "is_outgoing"
+        case messageID = "message_id"
     }
 
     var isImage: Bool {
