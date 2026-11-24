@@ -19,6 +19,15 @@ final class PDFExportServiceTests: XCTestCase {
         let document = try XCTUnwrap(PDFDocument(url: out))
         XCTAssertGreaterThanOrEqual(document.pageCount, 1)
         XCTAssertTrue((document.string ?? "").contains("Hello"))
+
+        let text = document.string ?? ""
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        for date in [base, base.addingTimeInterval(60)] {
+            let stamp = DateFormatting.formatMessageTimestamp(date)
+            let parts = stamp.split(separator: " ", maxSplits: 1).map(String.init)
+            XCTAssertTrue(text.contains(parts[0]), "PDF is missing the message date \(parts[0])")
+            XCTAssertTrue(text.contains(parts[1]), "PDF is missing the message time \(parts[1])")
+        }
     }
 
     func testCancellationLeavesNoFile() throws {

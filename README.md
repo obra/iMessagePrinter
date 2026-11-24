@@ -14,7 +14,7 @@ Export any iMessage, SMS, or RCS conversation to a formatted PDF or an editable 
 - **Inline images** with three export options: full resolution, 640x480 thumbnails, or text-only
 - **Cover page** with conversation summary (participants, message count, date range)
 - **Page numbers** and conversation name in the footer
-- **Word export** with real headings (conversation and month), date separators, and one editable paragraph per message, so you can search and highlight text
+- **Word export** with real headings (conversation and month), date separators, and one editable paragraph per message, each carrying its full date and time, so you can search, highlight, and quote a message without losing when it was sent
 - **Modal exports** with message and image counts, an estimated time remaining, and a Cancel button; only one export runs at a time
 
 ## Requirements

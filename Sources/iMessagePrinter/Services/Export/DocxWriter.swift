@@ -212,8 +212,8 @@ enum DocxWriter {
     // MARK: - Timeline helpers
 
     private static func metaParagraphXML(_ message: ExportMessage) -> String {
-        let time = message.date.map { timeFormatter.string(from: $0) } ?? "Unknown time"
-        var parts = [time]
+        let timestamp = message.date.map { DateFormatting.formatMessageTimestamp($0) } ?? "Unknown time"
+        var parts = [timestamp]
         if message.isFromMe {
             parts.append("Me")
         } else {
@@ -342,10 +342,4 @@ enum DocxWriter {
         return formatter
     }()
 
-    private static let timeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "h:mm a"
-        return formatter
-    }()
 }

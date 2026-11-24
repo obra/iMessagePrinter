@@ -34,6 +34,23 @@ final class DocxTimelineTests: XCTestCase {
         XCTAssertTrue(xml.contains("<w:br/>"))
         XCTAssertTrue(xml.contains("<w:tab/>"))
     }
+
+    func testEveryMessageCarriesItsFullDateAndTime() throws {
+        let xml = try DocxWriter.documentXML(
+            conversation: makeTimelineConversation(),
+            preparedImages: [:],
+            exportedAt: makeDate(2024, 2, 10, 12)
+        )
+
+        let stamps = [
+            DateFormatting.formatMessageTimestamp(makeDate(2024, 1, 15, 12)),
+            DateFormatting.formatMessageTimestamp(makeDate(2024, 1, 15, 13)),
+            DateFormatting.formatMessageTimestamp(makeDate(2024, 2, 2, 12)),
+        ]
+        for stamp in stamps {
+            XCTAssertTrue(xml.contains(stamp), "missing full timestamp \(stamp)")
+        }
+    }
 }
 
 private func makeTimelineConversation() -> ExportConversation {
