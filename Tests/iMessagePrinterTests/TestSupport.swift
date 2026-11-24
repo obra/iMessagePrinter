@@ -1,5 +1,8 @@
+import CoreGraphics
 import Foundation
 import GRDB
+import ImageIO
+import UniformTypeIdentifiers
 import XCTest
 @testable import iMessagePrinter
 
@@ -117,6 +120,129 @@ func textutilText(_ url: URL) throws -> String {
 
 func zipFileText(_ url: URL, path: String) throws -> String {
     try runTool("/usr/bin/unzip", ["-p", url.path, path]).stdout
+}
+
+func zipListing(_ url: URL) throws -> String {
+    try runTool("/usr/bin/unzip", ["-l", url.path]).stdout
+}
+
+func assertWellFormedXMLParts(_ docx: URL, file: StaticString = #filePath, line: UInt = #line) throws {
+    let paths = [
+        "[Content_Types].xml",
+        "_rels/.rels",
+        "word/document.xml",
+        "word/styles.xml",
+        "word/_rels/document.xml.rels",
+        "word/footer1.xml",
+        "docProps/core.xml",
+        "docProps/app.xml",
+    ]
+    for path in paths {
+        let archivePath = path == "[Content_Types].xml" ? "\\[Content_Types\\].xml" : path
+        let xml = try zipFileText(docx, path: archivePath)
+        let temporary = FileManager.default.temporaryDirectory
+            .appendingPathComponent("xml-\(UUID().uuidString).xml")
+        try Data(xml.utf8).write(to: temporary)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let result = try runTool("/usr/bin/xmllint", ["--noout", temporary.path])
+        if result.status != 0 {
+            XCTFail("\(path) is not well-formed: \(result.stderr)", file: file, line: line)
+        }
+    }
+}
+
+func tempDocx() -> URL {
+    FileManager.default.temporaryDirectory
+        .appendingPathComponent("\(UUID().uuidString).docx")
+}
+
+func makeTestPNG(width: Int, height: Int) throws -> URL {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("iMessagePrinterPNG-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let url = directory.appendingPathComponent("\(UUID().uuidString).png")
+
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let context = try XCTUnwrap(CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: 0,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ))
+    context.setFillColor(CGColor(red: 0.8, green: 0.2, blue: 0.2, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    let image = try XCTUnwrap(context.makeImage())
+    let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(
+        url as CFURL,
+        UTType.png.identifier as CFString,
+        1,
+        nil
+    ))
+    CGImageDestinationAddImage(destination, image, nil)
+    XCTAssertTrue(CGImageDestinationFinalize(destination))
+    return url
+}
+
+func makeConversationFixture(messageCount: Int, imageCount: Int) throws -> ExportConversation {
+    let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
+    var attachments: [ExportAttachment] = []
+
+    for index in 0..<imageCount {
+        let url = try makeTestPNG(width: 40, height: 20)
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 100
+        attachments.append(ExportAttachment(
+            id: Int64(index + 1),
+            filename: url.path,
+            transferName: "IMG_000\(index + 1).png",
+            mimeType: "image/png",
+            totalBytes: size,
+            isImage: true,
+            resolvedPath: url.path,
+            formattedSize: "\(size) bytes"
+        ))
+    }
+
+    let messages = (0..<messageCount).map { index in
+        ExportMessage(
+            id: Int64(index + 1),
+            guid: "fixture-message-\(index + 1)",
+            text: index == 0 ? "Hello from the fixture" : "Message \(index + 1)",
+            senderName: "Jane",
+            senderID: "+15551234567",
+            isFromMe: false,
+            date: baseDate.addingTimeInterval(Double(index) * 60),
+            dateRead: nil,
+            dateDelivered: nil,
+            service: "iMessage",
+            isDelivered: true,
+            isRead: true,
+            isSent: true,
+            isSystemMessage: false,
+            isEdited: false,
+            isRetracted: false,
+            replyToGUID: nil,
+            threadOriginatorGUID: nil,
+            groupTitle: nil,
+            groupActionType: 0,
+            reactions: [],
+            attachments: index == 0 ? attachments : []
+        )
+    }
+
+    return ExportConversation(
+        chatRowID: 1,
+        chatGUID: "chat-1",
+        displayName: "Jane",
+        participants: ["+15551234567"],
+        participantNames: ["Jane"],
+        serviceName: "iMessage",
+        isGroupChat: false,
+        messages: messages
+    )
 }
 
 private struct ToolResult {
