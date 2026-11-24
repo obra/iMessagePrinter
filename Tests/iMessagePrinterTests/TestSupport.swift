@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import XCTest
 @testable import iMessagePrinter
 
 let fixtureTypedStreamText = "from typedstream"
@@ -101,6 +102,45 @@ func planChat1(_ fixture: Fixture, imageMode: ExportImageMode = .omit) throws ->
 
 enum FixtureError: Error {
     case unknownChat(Int64)
+}
+
+func assertValidZip(_ url: URL, file: StaticString = #filePath, line: UInt = #line) throws {
+    let result = try runTool("/usr/bin/unzip", ["-t", url.path])
+    if result.status != 0 {
+        XCTFail("unzip -t failed: \(result.stderr)", file: file, line: line)
+    }
+}
+
+func textutilText(_ url: URL) throws -> String {
+    try runTool("/usr/bin/textutil", ["-convert", "txt", "-stdout", url.path]).stdout
+}
+
+func zipFileText(_ url: URL, path: String) throws -> String {
+    try runTool("/usr/bin/unzip", ["-p", url.path, path]).stdout
+}
+
+private struct ToolResult {
+    let status: Int32
+    let stdout: String
+    let stderr: String
+}
+
+private func runTool(_ executable: String, _ arguments: [String]) throws -> ToolResult {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = arguments
+
+    let stdoutPipe = Pipe()
+    let stderrPipe = Pipe()
+    process.standardOutput = stdoutPipe
+    process.standardError = stderrPipe
+
+    try process.run()
+    process.waitUntilExit()
+
+    let stdout = String(data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    let stderr = String(data: stderrPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    return ToolResult(status: process.terminationStatus, stdout: stdout, stderr: stderr)
 }
 
 private let fixtureSchema = [
