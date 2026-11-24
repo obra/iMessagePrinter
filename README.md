@@ -4,7 +4,7 @@
 
 # iMessagePrinter
 
-Export any iMessage, SMS, or RCS conversation to a beautifully formatted PDF — complete with timestamps, delivery/read receipts, reactions, contact names, and inline images.
+Export any iMessage, SMS, or RCS conversation to a formatted PDF or an editable Word document — complete with timestamps, delivery/read receipts, reactions, contact names, and inline images.
 
 ## What You Get
 
@@ -14,6 +14,8 @@ Export any iMessage, SMS, or RCS conversation to a beautifully formatted PDF —
 - **Inline images** with three export options: full resolution, 640x480 thumbnails, or text-only
 - **Cover page** with conversation summary (participants, message count, date range)
 - **Page numbers** and conversation name in the footer
+- **Word export** with real headings (conversation and month), date separators, and one editable paragraph per message, so you can search and highlight text
+- **Modal exports** with message and image counts, an estimated time remaining, and a Cancel button; only one export runs at a time
 
 ## Requirements
 
@@ -31,7 +33,7 @@ make run      # builds + launches
 Other targets:
 
 ```bash
-make build    # debug build only
+make build    # release build only
 make clean    # remove build artifacts
 ```
 
@@ -48,10 +50,16 @@ The app will also request Contacts access to resolve phone numbers and emails to
 
 - **Sidebar**: all your conversations, sorted by most recent. Use the search bar to filter by name or phone number.
 - **Detail view**: click a conversation to see the full message log with all metadata.
-- **Export**: click the Export PDF button in the toolbar. A save dialog appears with an **Images** dropdown:
+- **Export**: click the Export menu in the toolbar and choose **Export PDF…** or **Export Word Document…**. Both formats export the selected conversation only. A save dialog appears with an **Images** dropdown:
   - **No images** — smallest file, text placeholders for all images
   - **Thumbnails (640x480)** — good balance of quality and file size
   - **Full resolution** — every image at original size (can produce very large files)
+
+After you choose a destination, the export runs in a modal panel with progress, message and image counts, and an estimated time remaining. Cancel stops the export and removes the partial file. Changing the selected conversation or starting another export while one runs does not affect the export in progress.
+
+## Performance
+
+On a 10,885-message conversation with 750 images, the current release exports in about 0.2 seconds with no images, 19 seconds with thumbnails, and 10 seconds at full resolution. See [the benchmark](docs/superpowers/benchmarks/2026-11-24-docx.md) for the before/after numbers.
 
 ## How It Works
 
@@ -65,7 +73,8 @@ Messages are parsed from Apple's `attributedBody` binary format (typedstream) si
 Sources/iMessagePrinter/
   App/           App entry point and state management
   Models/        GRDB database records and display models
-  Services/      Database queries, PDF export, contact resolution, body parsing
+  Services/      Database queries, contact resolution, body parsing, PDF export
+  Services/Export/  Shared export models, planner, Word writer/packager, image preparation
   Views/         SwiftUI views (sidebar, detail, onboarding)
   Utilities/     Date formatting helpers
 ```

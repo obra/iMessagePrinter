@@ -2,23 +2,18 @@ import Foundation
 import Contacts
 
 final class ContactResolver: @unchecked Sendable {
+    private let lock = NSLock()
+    private let buildLock = NSLock()
     private var cache: [String: String] = [:]
     private var phoneLookup: [String: String] = [:] // normalized digits → display name
     private var emailLookup: [String: String] = [:] // lowercased email → display name
-    private var hasAccess = false
     private var didBuildLookup = false
 
-    init() {
-        let status = CNContactStore.authorizationStatus(for: .contacts)
-        if status == .authorized {
-            hasAccess = true
-            buildLookupTable()
-        }
-    }
+    init() {}
 
     /// Awaitable access request — call before any name resolution
     func ensureAccess() async {
-        if hasAccess && didBuildLookup { return }
+        if isReady { return }
 
         let store = CNContactStore()
         let status = CNContactStore.authorizationStatus(for: .contacts)
@@ -27,30 +22,41 @@ final class ContactResolver: @unchecked Sendable {
             do {
                 let granted = try await store.requestAccess(for: .contacts)
                 if granted {
-                    hasAccess = true
+                    setHasAccess()
                     buildLookupTable()
                 }
             } catch {}
         } else if status == .authorized {
-            hasAccess = true
-            if !didBuildLookup { buildLookupTable() }
+            setHasAccess()
+            buildLookupTable()
         }
     }
 
     func displayName(for identifier: String) -> String {
-        if let cached = cache[identifier] {
+        lock.lock()
+        let cached = cache[identifier]
+        lock.unlock()
+        if let cached {
             return cached
         }
 
         let name = lookupName(identifier: identifier) ?? formatIdentifier(identifier)
+        lock.lock()
         cache[identifier] = name
+        lock.unlock()
         return name
     }
 
     // MARK: - Build full contact lookup at startup
 
     private func buildLookupTable() {
+        buildLock.lock()
+        defer { buildLock.unlock() }
         guard hasAccess else { return }
+        lock.lock()
+        let alreadyBuilt = didBuildLookup
+        lock.unlock()
+        guard !alreadyBuilt else { return }
         let store = CNContactStore()
 
         let keysToFetch: [CNKeyDescriptor] = [
@@ -64,6 +70,8 @@ final class ContactResolver: @unchecked Sendable {
         let request = CNContactFetchRequest(keysToFetch: keysToFetch)
         request.unifyResults = true
 
+        var newPhoneLookup: [String: String] = [:]
+        var newEmailLookup: [String: String] = [:]
         do {
             try store.enumerateContacts(with: request) { contact, _ in
                 guard let name = self.contactDisplayName(contact) else { return }
@@ -72,21 +80,25 @@ final class ContactResolver: @unchecked Sendable {
                 for phone in contact.phoneNumbers {
                     let digits = phone.value.stringValue.filter { $0.isNumber }
                     if digits.count >= 7 {
-                        self.phoneLookup[digits] = name
+                        newPhoneLookup[digits] = name
                         // Also store last 10 digits for US numbers without country code
                         if digits.count > 10 {
                             let last10 = String(digits.suffix(10))
-                            self.phoneLookup[last10] = name
+                            newPhoneLookup[last10] = name
                         }
                     }
                 }
 
                 // Map every email to this name
                 for email in contact.emailAddresses {
-                    self.emailLookup[email.value.lowercased] = name
+                    newEmailLookup[email.value.lowercased] = name
                 }
             }
+            lock.lock()
+            phoneLookup = newPhoneLookup
+            emailLookup = newEmailLookup
             didBuildLookup = true
+            lock.unlock()
         } catch {
             // Fall back to raw identifiers
         }
@@ -95,6 +107,8 @@ final class ContactResolver: @unchecked Sendable {
     // MARK: - Lookup from pre-built maps
 
     private func lookupName(identifier: String) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
         // Phone number
         if identifier.contains(where: { $0.isNumber }) && !identifier.contains("@") {
             let digits = identifier.filter { $0.isNumber }
@@ -109,6 +123,26 @@ final class ContactResolver: @unchecked Sendable {
         }
 
         return nil
+    }
+
+    private var hasAccess: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return hasAccessValue
+    }
+
+    private var hasAccessValue = false
+
+    private var isReady: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return hasAccessValue && didBuildLookup
+    }
+
+    private func setHasAccess() {
+        lock.lock()
+        hasAccessValue = true
+        lock.unlock()
     }
 
     private func contactDisplayName(_ contact: CNContact) -> String? {

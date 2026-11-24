@@ -42,30 +42,32 @@ enum PDFExportService {
 
     // MARK: - Attachment Mode
 
-    enum AttachmentMode: Int, CaseIterable {
-        case omit = 0
-        case thumbnail = 1
-        case fullResolution = 2
-
-        var label: String {
-            switch self {
-            case .omit: return "No images"
-            case .thumbnail: return "Thumbnails (640\u{00D7}480)"
-            case .fullResolution: return "Full resolution"
-            }
-        }
-    }
-
     // MARK: - Export
 
     static func export(
-        conversation: ConversationInfo,
-        messages: [DisplayMessage],
-        attachmentMode: AttachmentMode,
-        to url: URL
+        conversation: ExportConversation,
+        imageMode: ExportImageMode,
+        to url: URL,
+        progress: @escaping (ExportProgress) -> Void,
+        isCancelled: @escaping () -> Bool
     ) throws {
+        if isCancelled() {
+            throw CancellationError()
+        }
+
+        let temporaryURL = AtomicFile.temporarySibling(of: url)
+        defer { try? FileManager.default.removeItem(at: temporaryURL) }
+
+        var estimator = ExportProgressEstimator(
+            totalMessages: conversation.messages.count,
+            totalImages: 0
+        )
+        estimator.setFractionRange(0.1...0.95)
+        estimator.setPhase(.rendering)
+        progress(estimator.snapshot)
+
         var mediaBox = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
-        guard let ctx = CGContext(url as CFURL, mediaBox: &mediaBox, nil) else {
+        guard let ctx = CGContext(temporaryURL as CFURL, mediaBox: &mediaBox, nil) else {
             throw ExportError.cannotCreatePDF
         }
 
@@ -134,9 +136,9 @@ enum PDFExportService {
         let metaItems: [(String, String)] = [
             ("PARTICIPANTS", conversation.participantNames.joined(separator: ", ")),
             ("SERVICE", conversation.serviceName),
-            ("MESSAGES", "\(messages.count)"),
+            ("MESSAGES", "\(conversation.messages.count)"),
             ("DATE RANGE", {
-                guard let f = messages.first?.date, let l = messages.last?.date else { return "N/A" }
+                guard let f = conversation.messages.first?.date, let l = conversation.messages.last?.date else { return "N/A" }
                 return "\(DateFormatting.formatDateOnly(f))  \u{2013}  \(DateFormatting.formatDateOnly(l))"
             }()),
             ("EXPORTED", DateFormatting.formatDateTime(Date()))
@@ -156,7 +158,14 @@ enum PDFExportService {
         beginPage()
         var prevDate: Date?
 
-        for message in messages {
+        for message in conversation.messages {
+            if isCancelled() {
+                ctx.closePDF()
+                throw CancellationError()
+            }
+            estimator.messageCompleted()
+            progress(estimator.snapshot)
+
             guard message.hasContent else { continue }
 
             // ---- Date separator ----
@@ -231,7 +240,7 @@ enum PDFExportService {
 
             // Attachment text labels (for non-image or omitted images)
             for att in message.attachments {
-                if att.isImage && attachmentMode == .omit {
+                if att.isImage && imageMode == .omit {
                     let name = att.transferName ?? att.filename ?? "image"
                     block.append(NSAttributedString(string: "\n\u{1F5BC}  \(name)  (\(att.formattedSize))",
                                                      attributes: [.font: fMeta, .foregroundColor: gray65]))
@@ -267,12 +276,12 @@ enum PDFExportService {
             y -= drawBlock(block, x: margin + contentIndent, width: contentWidth)
 
             // Draw inline images AFTER the text block
-            if attachmentMode != .omit {
+            if imageMode != .omit {
                 for att in message.attachments where att.isImage {
                     guard let path = att.resolvedPath, let srcImage = NSImage(contentsOfFile: path) else { continue }
 
                     let img: NSImage
-                    if attachmentMode == .thumbnail {
+                    if imageMode == .thumbnail {
                         img = downsample(srcImage, maxWidth: 640, maxHeight: 480)
                     } else {
                         img = srcImage
@@ -302,11 +311,24 @@ enum PDFExportService {
             y -= 8 // spacing between messages
         }
 
+        if isCancelled() {
+            ctx.closePDF()
+            throw CancellationError()
+        }
         endPage()
         ctx.closePDF()
-    }
 
-    // MARK: - Date Separator
+        if isCancelled() {
+            throw CancellationError()
+        }
+        try AtomicFile.publish(temporaryURL, to: url)
+
+        estimator.setPhase(.finishing)
+        var final = estimator.snapshot
+        final.fraction = 1.0
+        final.estimatedRemaining = nil
+        progress(final)
+    }
 
     private static func drawDateSeparator(ctx: CGContext, y: inout CGFloat, date: Date?) {
         let text = DateFormatting.formatDateOnly(date)
