@@ -42,28 +42,28 @@ enum PDFExportService {
 
     // MARK: - Attachment Mode
 
-    enum AttachmentMode: Int, CaseIterable {
-        case omit = 0
-        case thumbnail = 1
-        case fullResolution = 2
-
-        var label: String {
-            switch self {
-            case .omit: return "No images"
-            case .thumbnail: return "Thumbnails (640\u{00D7}480)"
-            case .fullResolution: return "Full resolution"
-            }
-        }
-    }
+    typealias AttachmentMode = ExportImageMode
 
     // MARK: - Export
 
     static func export(
-        conversation: ConversationInfo,
-        messages: [DisplayMessage],
-        attachmentMode: AttachmentMode,
-        to url: URL
+        conversation: ExportConversation,
+        imageMode: ExportImageMode,
+        to url: URL,
+        progress: @escaping (ExportProgress) -> Void,
+        isCancelled: @escaping () -> Bool
     ) throws {
+        if isCancelled() {
+            throw CancellationError()
+        }
+
+        var estimator = ExportProgressEstimator(
+            totalMessages: conversation.messages.count,
+            totalImages: 0
+        )
+        estimator.setPhase(.rendering)
+        progress(estimator.snapshot)
+
         var mediaBox = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
         guard let ctx = CGContext(url as CFURL, mediaBox: &mediaBox, nil) else {
             throw ExportError.cannotCreatePDF
@@ -134,9 +134,9 @@ enum PDFExportService {
         let metaItems: [(String, String)] = [
             ("PARTICIPANTS", conversation.participantNames.joined(separator: ", ")),
             ("SERVICE", conversation.serviceName),
-            ("MESSAGES", "\(messages.count)"),
+            ("MESSAGES", "\(conversation.messages.count)"),
             ("DATE RANGE", {
-                guard let f = messages.first?.date, let l = messages.last?.date else { return "N/A" }
+                guard let f = conversation.messages.first?.date, let l = conversation.messages.last?.date else { return "N/A" }
                 return "\(DateFormatting.formatDateOnly(f))  \u{2013}  \(DateFormatting.formatDateOnly(l))"
             }()),
             ("EXPORTED", DateFormatting.formatDateTime(Date()))
@@ -156,7 +156,15 @@ enum PDFExportService {
         beginPage()
         var prevDate: Date?
 
-        for message in messages {
+        for message in conversation.messages {
+            if isCancelled() {
+                ctx.closePDF()
+                try? FileManager.default.removeItem(at: url)
+                throw CancellationError()
+            }
+            estimator.messageCompleted()
+            progress(estimator.snapshot)
+
             guard message.hasContent else { continue }
 
             // ---- Date separator ----
@@ -231,7 +239,7 @@ enum PDFExportService {
 
             // Attachment text labels (for non-image or omitted images)
             for att in message.attachments {
-                if att.isImage && attachmentMode == .omit {
+                if att.isImage && imageMode == .omit {
                     let name = att.transferName ?? att.filename ?? "image"
                     block.append(NSAttributedString(string: "\n\u{1F5BC}  \(name)  (\(att.formattedSize))",
                                                      attributes: [.font: fMeta, .foregroundColor: gray65]))
@@ -267,12 +275,12 @@ enum PDFExportService {
             y -= drawBlock(block, x: margin + contentIndent, width: contentWidth)
 
             // Draw inline images AFTER the text block
-            if attachmentMode != .omit {
+            if imageMode != .omit {
                 for att in message.attachments where att.isImage {
                     guard let path = att.resolvedPath, let srcImage = NSImage(contentsOfFile: path) else { continue }
 
                     let img: NSImage
-                    if attachmentMode == .thumbnail {
+                    if imageMode == .thumbnail {
                         img = downsample(srcImage, maxWidth: 640, maxHeight: 480)
                     } else {
                         img = srcImage
@@ -304,6 +312,76 @@ enum PDFExportService {
 
         endPage()
         ctx.closePDF()
+
+        estimator.setPhase(.finishing)
+        var final = estimator.snapshot
+        final.fraction = 1.0
+        final.estimatedRemaining = nil
+        progress(final)
+    }
+
+    /// Temporary adapter for the old DisplayMessage-based caller until Task 9.
+    static func export(
+        conversation: ConversationInfo,
+        messages: [DisplayMessage],
+        attachmentMode: AttachmentMode,
+        to url: URL
+    ) throws {
+        let exported = ExportConversation(
+            chatRowID: conversation.chatRowID,
+            chatGUID: conversation.chatGUID,
+            displayName: conversation.displayName,
+            participants: conversation.participants,
+            participantNames: conversation.participantNames,
+            serviceName: conversation.serviceName,
+            isGroupChat: conversation.isGroupChat,
+            messages: messages.map(exportMessage(from:))
+        )
+        try export(
+            conversation: exported,
+            imageMode: attachmentMode,
+            to: url,
+            progress: { _ in },
+            isCancelled: { false }
+        )
+    }
+
+    private static func exportMessage(from message: DisplayMessage) -> ExportMessage {
+        ExportMessage(
+            id: message.id,
+            guid: message.guid,
+            text: message.text,
+            senderName: message.senderName,
+            senderID: message.senderID,
+            isFromMe: message.isFromMe,
+            date: message.date,
+            dateRead: message.dateRead,
+            dateDelivered: message.dateDelivered,
+            service: message.service,
+            isDelivered: message.isDelivered,
+            isRead: message.isRead,
+            isSent: message.isSent,
+            isSystemMessage: message.isSystemMessage,
+            isEdited: message.isEdited,
+            isRetracted: message.isRetracted,
+            replyToGUID: message.replyToGUID,
+            threadOriginatorGUID: message.threadOriginatorGUID,
+            groupTitle: message.groupTitle,
+            groupActionType: message.groupActionType,
+            reactions: message.reactions,
+            attachments: message.attachments.map { attachment in
+                ExportAttachment(
+                    id: attachment.id,
+                    filename: attachment.filename,
+                    transferName: attachment.transferName,
+                    mimeType: attachment.mimeType,
+                    totalBytes: attachment.totalBytes,
+                    isImage: attachment.isImage,
+                    resolvedPath: attachment.resolvedPath,
+                    formattedSize: attachment.formattedSize
+                )
+            }
+        )
     }
 
     // MARK: - Date Separator

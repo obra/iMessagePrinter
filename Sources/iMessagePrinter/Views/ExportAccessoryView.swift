@@ -2,8 +2,8 @@ import AppKit
 
 final class ExportAccessoryView: NSView {
     private let popup = NSPopUpButton()
-    var selectedMode: PDFExportService.AttachmentMode {
-        PDFExportService.AttachmentMode(rawValue: popup.indexOfSelectedItem) ?? .thumbnail
+    var selectedMode: ExportImageMode {
+        ExportImageMode(rawValue: popup.indexOfSelectedItem) ?? .thumbnail
     }
 
     convenience init() {
@@ -17,7 +17,7 @@ final class ExportAccessoryView: NSView {
         label.translatesAutoresizingMaskIntoConstraints = false
 
         popup.translatesAutoresizingMaskIntoConstraints = false
-        for mode in PDFExportService.AttachmentMode.allCases {
+        for mode in ExportImageMode.allCases {
             popup.addItem(withTitle: mode.label)
         }
         popup.selectItem(at: 1) // Default to thumbnails
