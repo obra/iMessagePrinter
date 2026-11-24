@@ -1,5 +1,11 @@
 import Foundation
 
+struct PreparedImage: Equatable {
+    let fileName: String
+    let pixelWidth: Int
+    let pixelHeight: Int
+}
+
 enum DocxWriter {
     static func contentTypesXML(hasImages: Bool) -> String {
         var parts = [
@@ -93,4 +99,254 @@ enum DocxWriter {
         <Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>iMessagePrinter</Application></Properties>
         """
     }
+
+    // MARK: - Document
+
+    static func documentXML(
+        conversation: ExportConversation,
+        preparedImages: [Int64: PreparedImage],
+        exportedAt: Date
+    ) -> String {
+        var xml = String()
+        xml.reserveCapacity(conversation.messages.count * 400 + 4_000)
+        xml += """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body>
+        """
+
+        xml += paragraphXML(style: "Title", text: "Conversation with \(conversation.displayName)")
+
+        let exportedText = exportDateFormatter.string(from: exportedAt)
+        xml += paragraphXML(style: "MessageMeta", text: "Exported \(exportedText)")
+
+        let participantText = zip(conversation.participantNames, conversation.participants)
+            .map { name, handle in name == handle ? name : "\(name) (\(handle))" }
+            .joined(separator: ", ")
+        if !participantText.isEmpty {
+            xml += paragraphXML(style: "MessageMeta", text: "Participants: \(participantText)")
+        }
+        xml += paragraphXML(style: "MessageMeta", text: "Service: \(conversation.serviceName)")
+        xml += paragraphXML(style: "MessageMeta", text: "Messages: \(conversation.messages.count)")
+
+        let datedMessages = conversation.messages.compactMap(\.date)
+        if let first = datedMessages.first, let last = datedMessages.last {
+            let range = "\(shortDateFormatter.string(from: first)) – \(shortDateFormatter.string(from: last))"
+            xml += paragraphXML(style: "MessageMeta", text: "Date range: \(range)")
+        }
+
+        xml += #"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#
+        xml += paragraphXML(style: "Heading1", text: conversation.displayName)
+
+        let imageIDs = preparedImages.keys.sorted()
+        let relationshipIDs = Dictionary(uniqueKeysWithValues: imageIDs.enumerated().map {
+            ($0.element, "rIdImage\($0.offset + 1)")
+        })
+
+        var previousMonth: String?
+        var previousDay: String?
+
+        for message in conversation.messages where message.hasContent {
+            let monthLabel = message.date.map { monthFormatter.string(from: $0) } ?? "Undated"
+            if monthLabel != previousMonth {
+                xml += paragraphXML(style: "Heading2", text: monthLabel)
+                previousMonth = monthLabel
+            }
+
+            let dayLabel = message.date.map { dateSeparatorFormatter.string(from: $0) } ?? "Undated"
+            if dayLabel != previousDay {
+                xml += paragraphXML(style: "DateSeparator", text: dayLabel)
+                previousDay = dayLabel
+            }
+
+            xml += metaParagraphXML(message)
+
+            let bodyText = messageBodyText(message)
+            if let bodyText, !bodyText.isEmpty {
+                let style = message.isSystemMessage ? "SystemMessage" : "MessageBody"
+                xml += bodyParagraphXML(style: style, text: bodyText)
+            }
+
+            for reaction in message.reactions {
+                xml += paragraphXML(style: "Reaction", text: "\(reaction.emoji) \(reaction.senderName)")
+            }
+
+            if message.replyToGUID != nil || message.threadOriginatorGUID != nil {
+                xml += paragraphXML(style: "Reaction", text: "Reply in thread")
+            }
+
+            for attachment in message.attachments {
+                xml += paragraphXML(
+                    style: "Attachment",
+                    text: "📎 \(attachmentLabel(attachment)) (\(attachment.formattedSize))"
+                )
+                if let image = preparedImages[attachment.id],
+                   let relationshipID = relationshipIDs[attachment.id] {
+                    xml += imageParagraphXML(
+                        attachmentID: attachment.id,
+                        image: image,
+                        relationshipID: relationshipID
+                    )
+                }
+            }
+        }
+
+        xml += #"<w:sectPr><w:footerReference w:type="default" r:id="rIdFooter"/><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#
+        xml += "</w:body></w:document>"
+        return xml
+    }
+
+    // MARK: - Timeline helpers
+
+    private static func metaParagraphXML(_ message: ExportMessage) -> String {
+        let time = message.date.map { timeFormatter.string(from: $0) } ?? "Unknown time"
+        var parts = [time]
+        if message.isFromMe {
+            parts.append("Me")
+        } else {
+            var sender = message.senderName
+            if message.senderID != message.senderName {
+                sender += " (\(message.senderID))"
+            }
+            parts.append(sender)
+        }
+        parts.append(message.service)
+        if message.isRetracted {
+            parts.append("unsent")
+        } else if message.isEdited {
+            parts.append("edited")
+        }
+        if message.isFromMe {
+            if message.isRead {
+                parts.append("read")
+            } else if message.isDelivered {
+                parts.append("delivered")
+            } else if message.isSent {
+                parts.append("sent")
+            }
+        }
+        return paragraphXML(style: "MessageMeta", text: parts.joined(separator: " · "))
+    }
+
+    private static func messageBodyText(_ message: ExportMessage) -> String? {
+        if let text = message.text, !text.isEmpty {
+            return text
+        }
+        if let groupTitle = message.groupTitle, !groupTitle.isEmpty {
+            return "Group renamed to \(groupTitle)"
+        }
+        if message.isSystemMessage {
+            return "System message"
+        }
+        return nil
+    }
+
+    private static func attachmentLabel(_ attachment: ExportAttachment) -> String {
+        if let transferName = attachment.transferName, !transferName.isEmpty {
+            return transferName
+        }
+        if let filename = attachment.filename, !filename.isEmpty {
+            return (filename as NSString).lastPathComponent
+        }
+        return "Attachment"
+    }
+
+    private static func paragraphXML(style: String, text: String) -> String {
+        "<w:p><w:pPr><w:pStyle w:val=\"\(style)\"/></w:pPr><w:r><w:t xml:space=\"preserve\">\(XMLText.escape(text))</w:t></w:r></w:p>"
+    }
+
+    private static func bodyParagraphXML(style: String, text: String) -> String {
+        "<w:p><w:pPr><w:pStyle w:val=\"\(style)\"/></w:pPr>\(runXML(text))</w:p>"
+    }
+
+    /// XMLText.runs returns escaped text plus <w:br/> and <w:tab/> tokens.
+    /// Group the text into <w:t> elements so the result is valid WordprocessingML.
+    private static func runXML(_ text: String) -> String {
+        let markup = XMLText.runs(text)
+        var out = "<w:r>"
+        var buffer = String()
+
+        func flush() {
+            guard !buffer.isEmpty else { return }
+            out += "<w:t xml:space=\"preserve\">\(buffer)</w:t>"
+            buffer.removeAll(keepingCapacity: true)
+        }
+
+        var index = markup.startIndex
+        while index < markup.endIndex {
+            if markup[index...].hasPrefix("<w:br/>") {
+                flush()
+                out += "<w:br/>"
+                index = markup.index(index, offsetBy: 7)
+            } else if markup[index...].hasPrefix("<w:tab/>") {
+                flush()
+                out += "<w:tab/>"
+                index = markup.index(index, offsetBy: 8)
+            } else {
+                buffer.append(markup[index])
+                index = markup.index(after: index)
+            }
+        }
+        flush()
+        out += "</w:r>"
+        return out
+    }
+
+    private static func imageParagraphXML(
+        attachmentID: Int64,
+        image: PreparedImage,
+        relationshipID: String
+    ) -> String {
+        let emuPerPixel = 9_525.0
+        let maxWidth = 4.5 * 914_400
+        let maxHeight = 6.0 * 914_400
+        var width = Double(max(image.pixelWidth, 1)) * emuPerPixel
+        var height = Double(max(image.pixelHeight, 1)) * emuPerPixel
+        let scale = min(1.0, maxWidth / width, maxHeight / height)
+        width *= scale
+        height *= scale
+        let cx = Int(width.rounded())
+        let cy = Int(height.rounded())
+        let fileName = XMLText.escape(image.fileName)
+
+        return """
+        <w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="\(cx)" cy="\(cy)"/><wp:docPr id="\(attachmentID)" name="Picture \(attachmentID)"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="\(attachmentID)" name="\(fileName)"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="\(relationshipID)"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="\(cx)" cy="\(cy)"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>
+        """
+    }
+
+    private static let exportDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateStyle = .long
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    private static let shortDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
+
+    private static let monthFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "MMMM yyyy"
+        return formatter
+    }()
+
+    private static let dateSeparatorFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "EEEE, MMMM d, yyyy"
+        return formatter
+    }()
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "h:mm a"
+        return formatter
+    }()
 }
